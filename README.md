@@ -5,20 +5,45 @@
 ## 结构
 
 ```
-Goagent/
-├── server/          Go daemon —— HTTP 静态服务 + WebSocket 广播
-└── packages/
-    └── web/         Vue3 + Vite，之后用 Capacitor 打包成 App
+浏览器 / CLI / App ──WebSocket──▶ Go daemon ──stdio JSONL──▶ node ──▶ pi SDK ──▶ LLM
+                                        │
+                                        └── 广播给所有客户端
 ```
 
-`packages/shared/`（协议类型 + WS 客户端）和 `packages/cli/` 到 W2 再建。
+```
+Goagent/
+├── server/            Go daemon —— HTTP 静态服务 + WebSocket 广播 + 子进程编排
+│   ├── main.go        启动、路由、SPA 回退
+│   ├── hub.go         连接管理 + 广播
+│   ├── client.go      单连接的收发循环 + 心跳
+│   └── agent.go       起 node 子进程，stdio 双向 JSONL
+├── packages/
+│   ├── agent/         pi SDK 宿主（Node）
+│   │   └── src/
+│   │       ├── host.mjs   stdio 协议 + agent 装配
+│   │       └── tools.mjs  工具定义 + 路径越界检查
+│   └── web/           Vue3 + Vite，之后用 Capacitor 打包成 App
+└── scripts/           冒烟测试
+```
+
+**为什么 agent 跑在 node 里而不是 Go 里？** pi SDK 只有 TS 版。
+Go 管的是连接、广播、进程生命周期、取消传播、审批路由、审计 —— 这些是它的强项；
+agent 循环本身是 pi 写好的，重写它是浪费。两边各干各擅长的。
+
+`packages/shared/`（协议类型 + WS 客户端）和 `packages/cli/` 到 Step 5 再建。
 
 ## 跑起来
+
+先准备密钥：
+
+```bash
+cp .env.example .env     # 然后填 DEEPSEEK_API_KEY
+```
 
 两个终端：
 
 ```bash
-pnpm server          # 终端 1：Go daemon，:8080
+pnpm server          # 终端 1：Go daemon，:8080（同时拉起 agent 子进程）
 pnpm web dev         # 终端 2：Vite 开发服务器，:5173
 ```
 
@@ -37,7 +62,17 @@ pnpm server          # daemon 直接把它当静态目录伺服，:8080 一个�
 ## 当前进度
 
 - [x] W1 骨架：WebSocket 广播，多窗口实时同步
-- [ ] W1 验收：两个浏览器窗口同步 ✅ ← 现在在这
-- [ ] W2 会话管理 + 子进程编排
-- [ ] W3 多客户端广播 + 审批状态机 + 审计日志
-- [ ] W4 Go 面试题 + 压测 + Capacitor 打包 + 录 demo
+- [x] Step 1：Go daemon ⇄ node 子进程（stdio JSONL），pi SDK 接 DeepSeek，
+      流式输出 + 工具调用 ← **现在在这**
+- [ ] Step 2：会话管理 + context 取消（中途打断正在跑的 agent）
+- [ ] Step 3：审批状态机（挂在 pi 的 `beforeToolCall` 钩子上）
+- [ ] Step 4：审计日志（挂在 `afterToolCall` 钩子上）
+- [ ] Step 5：CLI 客户端，`npm i -g` 后有 `goagent` 命令
+- [ ] Step 6：压测 + Capacitor 打包 + 录 demo
+
+## 冒烟测试
+
+```bash
+pnpm smoke          # 广播是否通（不调模型，秒级）
+pnpm smoke:agent    # 全链路 prompt → 流式文本 → done（真调模型，花钱）
+```

@@ -120,6 +120,12 @@ ws.onopen = () => {
   }
 
   // 交互模式
+  if (!process.stdin.isTTY) {
+    process.stderr.write(
+      dim('stdin 不是交互式终端，一有输入结束就会退出。要一次性提问：goagent "你的问题"\n'),
+    )
+  }
+
   rl = createInterface({ input: process.stdin, output: process.stdout })
   rl.setPrompt(cyan('> '))
   rl.prompt()
@@ -160,7 +166,25 @@ ws.onmessage = (e) => {
   render(ev)
 }
 
-// 连接失败时 Node 只给 onerror + onclose(1006)，拿不到具体原因，统一在 onclose 里报
+// ⚠️ 连接失败时 Node 的 WebSocket 只发 error、**不发 close**（undici 的行为）。
+// 只监听 onclose 的话，这个处理函数永远不会跑到，进程会一声不响地以退出码 0 结束 ——
+// daemon 没起的时候表现得像「运行成功但什么都没发生」，非常难查。
+ws.onerror = () => {
+  if (exiting) return
+  exiting = true
+  newlineIfNeeded()
+
+  if (opened) {
+    process.stderr.write(red('\n与 daemon 的连接出错\n'))
+    process.exit(1)
+  }
+
+  process.stderr.write(red(`连不上 ${url}\n`))
+  process.stderr.write(dim('daemon 起来了吗？另开一个终端跑 pnpm server\n'))
+  process.exit(1)
+}
+
+// onclose 负责「连上过、后来断了」的正常收尾
 ws.onclose = () => {
   if (exiting) return
   newlineIfNeeded()

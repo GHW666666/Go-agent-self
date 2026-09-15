@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+
+# 密钥，绝不入库
+.env
+.env.*
+!.env.example
+
+# Go 编译产物
+server/*.exe
+server/goagent

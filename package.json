@@ -1,0 +1,11 @@
+{
+  "name": "goagent",
+  "private": true,
+  "scripts": {
+    "web": "pnpm --filter @goagent/web",
+    "server": "cd server && go run .",
+    "build": "pnpm --filter @goagent/web build",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:agent": "node scripts/smoke-agent.mjs"
+  }
+}

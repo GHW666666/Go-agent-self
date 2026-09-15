@@ -86,6 +86,14 @@ lines.on('line', (line) => {
     return
   }
 
+  // ⚠️ cancel 必须绕开队列。它要打断的正是队列头部那个正在跑的 prompt，
+  // 排到队尾就等于永远不生效 —— 等它执行时前面那个早就跑完了。
+  if (msg.type === 'cancel') {
+    log('收到取消请求')
+    agent.abort()
+    return
+  }
+
   queue = queue.then(() => handle(msg))
 })
 

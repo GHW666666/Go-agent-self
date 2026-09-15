@@ -76,14 +76,25 @@ pnpm server          # daemon 直接把它当静态目录伺服，:8080 一个�
       流式输出 + 工具调用 ← **现在在这**
 - [x] Step 5：CLI 客户端 —— 提前做了，因为它不依赖 Step 2/3/4，
       加上之后「三端同时看到」这个卖点才真正成立
-- [ ] Step 2：会话管理 + context 取消（中途打断正在跑的 agent）← **下一步**
+- [x] Step 2：会话管理 + context 取消（中途打断正在跑的 agent）← **现在在这**
 - [ ] Step 3：审批状态机（挂在 pi 的 `beforeToolCall` 钩子上）
 - [ ] Step 4：审计日志（挂在 `afterToolCall` 钩子上）
 - [ ] Step 6：压测 + Capacitor 打包 + 录 demo
 
+## 会话
+
+一个会话 = 一个独立的 agent 子进程 + 一条可取消的生命周期。
+
+连接时用 `?session=<id>` 指定会话：带上已存在的 id 就加入它（多个窗口/CLI
+共享同一段对话），不带就开一个新的。连上后第一帧是
+`{"type":"session","id":"..."}`，客户端要把它放进 URL 才能分享出去。
+
+没人连的会话会在闲置 15 分钟后被回收（连同它的 node 子进程）。
+`-session-idle 0` 可以关掉回收，`-session-idle 6s` 方便观察。
+
 ## 冒烟测试
 
 ```bash
-pnpm smoke          # 广播是否通（不调模型，秒级）
-pnpm smoke:agent    # 全链路 prompt → 流式文本 → done（真调模型，花钱）
+pnpm smoke:agent      # 单客户端全链路 prompt → 流式文本 → done（真调模型，花钱）
+pnpm smoke:sessions   # 会话隔离 / 共享 / 取消（只有最后一组调模型）
 ```

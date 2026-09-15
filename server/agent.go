@@ -27,12 +27,15 @@ type Agent struct {
 	stdin   io.WriteCloser
 	mu      sync.Mutex // 保护 stdin：多个客户端可能同时发 prompt
 	onEvent func([]byte)
+	onExit  func()
 }
 
 // StartAgent 拉起 agent 子进程，dir 是 packages/agent 的路径。
-// onEvent 对每一行 stdout 调用一次，来自 readLoop 那条独立 goroutine，
-// 所以它必须自己保证并发安全。
-func StartAgent(dir string, onEvent func([]byte)) (*Agent, error) {
+//
+// onEvent 对每一行 stdout 调用一次，onExit 在子进程结束时调用一次。
+// 两个都来自 readLoop 那条独立 goroutine，所以它们必须自己保证并发安全 ——
+// 不能假设自己跑在谁的主线程上。
+func StartAgent(dir string, onEvent func([]byte), onExit func()) (*Agent, error) {
 	// --env-file-if-exists：没有 .env 也不报错（比如 CI 上靠真实环境变量）
 	cmd := exec.Command("node", "--env-file-if-exists=../../.env", "src/host.mjs")
 	cmd.Dir = dir
@@ -52,7 +55,7 @@ func StartAgent(dir string, onEvent func([]byte)) (*Agent, error) {
 		return nil, fmt.Errorf("启动 node 失败: %w", err)
 	}
 
-	a := &Agent{cmd: cmd, stdin: stdin, onEvent: onEvent}
+	a := &Agent{cmd: cmd, stdin: stdin, onEvent: onEvent, onExit: onExit}
 	go a.readLoop(stdout)
 	return a, nil
 }
@@ -94,4 +97,10 @@ func (a *Agent) readLoop(r io.Reader) {
 		log.Printf("读 agent 输出出错: %v", err)
 	}
 	log.Print("agent 子进程已退出")
+
+	// 通知上层把会话摘掉。少了这一步，会话会一直指着一个死进程，
+	// 客户端看到的表现是「发消息没反应」。
+	if a.onExit != nil {
+		a.onExit()
+	}
 }

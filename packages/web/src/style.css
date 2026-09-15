@@ -115,9 +115,17 @@ header {
 }
 
 .busy {
-  margin-left: auto;
   font-size: 12px;
   color: var(--accent);
+}
+
+/* 会话 id 靠右，方便一眼看到、也方便念给别人 */
+.session {
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.5px;
 }
 
 form {
@@ -159,4 +167,16 @@ button {
 button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* 停止不是「发送」的一个变体，是打断 —— 用红色区分开 */
+button.stop {
+  background: #e5484d;
+}
+
+.messages code {
+  padding: 1px 4px;
+  font-size: 0.9em;
+  background: var(--line);
+  border-radius: 4px;
 }

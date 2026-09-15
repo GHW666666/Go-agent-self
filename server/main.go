@@ -6,27 +6,26 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"time"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "监听地址")
 	webDir := flag.String("web", "../packages/web/dist", "前端静态文件目录")
 	agentDir := flag.String("agent", "../packages/agent", "pi agent 子进程所在目录")
+	sessionIdle := flag.Duration("session-idle", 15*time.Minute,
+		"会话闲置多久后回收（0 表示不回收）")
 	flag.Parse()
 
 	hub := NewHub()
 
-	// agent 的事件（LLM 流式输出、工具调用）直接广播给所有客户端 ——
-	// 这就是「三个端同时看到同一个 agent 在干什么」的实现。
-	if a, err := StartAgent(*agentDir, hub.broadcast); err != nil {
-		log.Printf("agent 未启动，本次只有广播没有智能: %v", err)
-	} else {
-		hub.agent = a
-	}
+	// 每个会话一个 agent 子进程，agent 的输出只广播给该会话的客户端。
+	// 连接进来时才建会话（懒加载）—— 没人用就不该起进程。
+	sessions := NewSessions(*agentDir, hub, *sessionIdle)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWS(hub, w, r)
+		serveWS(sessions, hub, w, r)
 	})
 	mux.Handle("/", spa(*webDir))
 
@@ -35,9 +34,7 @@ func main() {
 	// 不用 log.Fatal 在这里 —— 它走 os.Exit，会跳过所有 defer，
 	// agent 子进程就成了没人收的孤儿。先手动收尾再退。
 	err := http.ListenAndServe(*addr, mux)
-	if hub.agent != nil {
-		hub.agent.Close()
-	}
+	sessions.CloseAll()
 	log.Fatal(err)
 }
 

@@ -10,6 +10,7 @@ const LABEL: Record<Status, string> = {
 
 /** daemon 广播给客户端的消息。发出去的和收回来的共用同一套形状。 */
 type AgentEvent =
+  | { type: 'session'; id: string }
   | { type: 'prompt'; text: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_start'; name: string; args: unknown }
@@ -28,6 +29,7 @@ const bubbles = ref<Bubble[]>([])
 const draft = ref('')
 const status = ref<Status>('connecting')
 const running = ref(false)
+const sessionId = ref('')
 
 let send = (_: string) => {}
 
@@ -44,6 +46,17 @@ function onEvent(raw: string) {
   }
 
   switch (ev.type) {
+    case 'session':
+      // 服务端告诉我们落在哪个会话。写回地址栏 —— 刷新不丢，
+      // 复制给别人就能进同一个会话，那边的提问和回复我们全看得见。
+      sessionId.value = ev.id
+      {
+        const url = new URL(location.href)
+        url.searchParams.set('session', ev.id)
+        history.replaceState(null, '', url)
+      }
+      break
+
     case 'prompt':
       // 服务端把我们的 prompt 原样广播回来，每个窗口都看得到这一问
       bubbles.value.push({ kind: 'user', text: ev.text })
@@ -87,6 +100,12 @@ function submit() {
   send(JSON.stringify({ type: 'prompt', text }))
   draft.value = ''
 }
+
+// 只是把 cancel 发给服务端，由它透传给 agent。会话里任何一端按停止，
+// 所有人都会看到它停下来。
+function stop() {
+  send(JSON.stringify({ type: 'cancel' }))
+}
 </script>
 
 <template>
@@ -95,16 +114,22 @@ function submit() {
       <i class="dot" :class="status" />
       {{ LABEL[status] }}
       <span v-if="running" class="busy">思考中…</span>
+      <span v-if="sessionId" class="session" title="把地址栏链接发给别人，就能进同一个会话">
+        {{ sessionId }}
+      </span>
     </header>
 
     <ul class="messages">
       <li v-for="(b, i) in bubbles" :key="i" :class="b.kind">{{ b.text }}</li>
-      <li v-if="!bubbles.length" class="empty">说点什么，另开一个窗口看看</li>
+      <li v-if="!bubbles.length" class="empty">
+        说点什么。想多端同步，把地址栏里的 <code>?session=</code> 一起发过去
+      </li>
     </ul>
 
     <form @submit.prevent="submit">
       <input v-model="draft" placeholder="输入后回车" autocomplete="off" :disabled="running" />
-      <button :disabled="!draft.trim() || running">发送</button>
+      <button v-if="!running" :disabled="!draft.trim()">发送</button>
+      <button v-else type="button" class="stop" @click="stop">停止</button>
     </form>
   </main>
 </template>

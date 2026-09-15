@@ -1,9 +1,6 @@
 package main
 
-import (
-	"log"
-	"sync"
-)
+import "sync"
 
 // Hub 持有所有活跃连接，并负责把消息广播给它们。
 //
@@ -13,10 +10,6 @@ import (
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[*Client]struct{}
-
-	// agent 是跑 pi 的子进程，可能为 nil —— 启动失败时整个 daemon
-	// 退化成纯广播，W1 的能力原样还在。
-	agent *Agent
 }
 
 func NewHub() *Hub {
@@ -40,14 +33,41 @@ func (h *Hub) remove(c *Client) {
 	h.mu.Unlock()
 }
 
-// broadcast 把同一条消息发给所有客户端，包括发送者自己。
+// dropSession 踢掉某个会话里的所有连接。会话结束时必须调 ——
+// 否则连接会挂在一条已经死掉的会话上，之后每发一条消息都只收到
+// 「会话已结束」，而客户端无从知道该重连，就这么卡住了。
+//
+// 断线本身就是最好的信号：客户端会走它本来就有的重连逻辑，用同一个
+// ?session= 重新加入，GetOrCreate 发现它不在了就新建一个 ——
+// 会话和连接重新对齐，不用为此加任何新协议。
+func (h *Hub) dropSession(session string) {
+	h.mu.RLock()
+	var gone []*Client
+	for c := range h.clients {
+		if c.session == session {
+			gone = append(gone, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range gone {
+		h.remove(c)
+	}
+}
+
+// broadcast 把同一条消息发给**指定会话里**的所有客户端。
 //
 // 发送缓冲写满的（对端卡住或消费不过来）直接踢掉：
 // 不能让一个慢客户端把整个广播卡住。
-func (h *Hub) broadcast(msg []byte) {
+//
+// c.session 在 add 之前就设好、之后不再改，所以这里读它是安全的。
+func (h *Hub) broadcast(session string, msg []byte) {
 	h.mu.RLock()
 	var slow []*Client
 	for c := range h.clients {
+		if c.session != session {
+			continue
+		}
 		select {
 		case c.send <- msg:
 		default:
@@ -59,18 +79,5 @@ func (h *Hub) broadcast(msg []byte) {
 	// 出了读锁再删，否则 remove 要写锁会和上面的 RLock 互相等待
 	for _, c := range slow {
 		h.remove(c)
-	}
-}
-
-// forward 处理一条来自客户端的消息：先广播给所有人（这样每个窗口都看得到
-// 是谁发的内容），再交给 agent 去处理。
-func (h *Hub) forward(msg []byte) {
-	h.broadcast(msg)
-
-	if h.agent == nil {
-		return
-	}
-	if err := h.agent.Send(msg); err != nil {
-		log.Printf("转发给 agent 失败: %v", err)
 	}
 }

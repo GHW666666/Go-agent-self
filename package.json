@@ -6,7 +6,7 @@
     "cli": "node packages/cli/dist/index.js",
     "server": "cd server && go run .",
     "build": "pnpm --filter @goagent/web build && pnpm --filter @goagent/cli build",
-    "smoke": "node scripts/smoke.mjs",
-    "smoke:agent": "node scripts/smoke-agent.mjs"
+    "smoke:agent": "node scripts/smoke-agent.mjs",
+    "smoke:sessions": "node scripts/smoke-sessions.mjs"
   }
 }

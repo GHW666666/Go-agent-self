@@ -10,6 +10,16 @@ export interface Handlers {
 
 const RECONNECT_DELAY = 1000
 
+// 会话 id 就放在地址栏里，URL 是唯一的真相来源：
+// 刷新不丢、复制链接给别人就能一起看、重连也自动带上同一个。
+// 服务端会在连上后回一条 session 事件，客户端拿到再写回地址栏。
+function wsURL() {
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+  const session = new URLSearchParams(location.search).get('session')
+  const query = session ? `?session=${encodeURIComponent(session)}` : ''
+  return `${scheme}://${location.host}/ws${query}`
+}
+
 export function connectWS({ message, status }: Handlers) {
   // 断线期间发的消息先攒着，连上再补发
   const pending: string[] = []
@@ -18,8 +28,8 @@ export function connectWS({ message, status }: Handlers) {
   function connect() {
     status?.('connecting')
 
-    const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    ws = new WebSocket(`${scheme}://${location.host}/ws`)
+    // 每次重连都重新读一次地址栏，这样期间换过会话也能跟上
+    ws = new WebSocket(wsURL())
 
     ws.onopen = () => {
       status?.('open')

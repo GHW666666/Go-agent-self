@@ -6,6 +6,7 @@ import { styleText } from 'node:util'
 // 跟 packages/web/src/App.vue 里那份是同一套消息。
 // 现在只有两个消费者，先各留一份；等 Step 3 加了审批消息，再抽到 packages/shared。
 type AgentEvent =
+  | { type: 'session'; id: string }
   | { type: 'prompt'; text: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_start'; name: string; args: unknown }
@@ -28,23 +29,33 @@ goagent —— 连到本地 agent daemon 的终端客户端
   goagent                        交互式对话
   goagent "你的问题"              问一句就退出
   goagent -u ws://主机:端口      指定 daemon 地址（默认 ws://localhost:8080/ws）
+  goagent -s <会话id>            加入一个已有会话（网页地址栏里那个），
+                                 这样终端和浏览器看到的是同一段对话
 
 交互模式里:
+  /stop                          打断正在跑的 agent
   /exit                          退出
 `.trim()
 
 // ---------------------------------------------------------------- 参数
 const argv = process.argv.slice(2)
 let url = process.env.GOAGENT_URL ?? 'ws://localhost:8080/ws'
+let session = ''
 const words: string[] = []
 
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
   if (a === '--url' || a === '-u') url = argv[++i] ?? url
+  else if (a === '--session' || a === '-s') session = argv[++i] ?? session
   else if (a === '--help' || a === '-h') {
     console.log(HELP)
     process.exit(0)
   } else words.push(a)
+}
+
+// 不带 -s 就让服务端开一个新的，它会在连上后把 id 告诉我们
+if (session) {
+  url += (url.includes('?') ? '&' : '?') + `session=${encodeURIComponent(session)}`
 }
 
 /** 有内容就是「问一句就退出」模式 */
@@ -87,6 +98,12 @@ function render(ev: AgentEvent) {
 
     case 'ready':
       process.stderr.write(dim(`模型 ${ev.model}\n`))
+      break
+
+    case 'session':
+      // 打出来是为了能分享出去：另开一个终端 goagent -s <id>，
+      // 就能和这个会话看到同一段对话。
+      process.stderr.write(dim(`会话 ${ev.id}（goagent -s ${ev.id} 可从别处加入）\n`))
       break
 
     case 'done':
@@ -134,6 +151,7 @@ ws.onopen = () => {
     const text = line.trim()
     if (!text) return rl?.prompt()
     if (text === '/exit' || text === '/quit') return quit()
+    if (text === '/stop' || text === '/cancel') return stop()
 
     ask(text)
     // 这里故意不立刻再 prompt：等 agent 的 done 事件回来再给输入行，
@@ -201,6 +219,14 @@ ws.onclose = () => {
 function ask(text: string) {
   pendingEcho = text
   ws.send(JSON.stringify({ type: 'prompt', text }))
+}
+
+// 打断只发一条 cancel，由 daemon 透传给 agent。整个会话里所有端都会看到它停下 ——
+// 所以从浏览器里按停止，也能打断终端这边正在跑的 agent。
+function stop() {
+  newlineIfNeeded()
+  process.stdout.write(dim('请求停止…\n'))
+  ws.send(JSON.stringify({ type: 'cancel' }))
 }
 
 function quit() {

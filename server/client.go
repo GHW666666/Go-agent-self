@@ -43,9 +43,13 @@ type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan []byte
+
+	// session 是这个连接属于哪个会话。加进 hub 之前就设好、之后不再改，
+	// 所以 Hub.broadcast 带着读锁读它是安全的。
+	session string
 }
 
-func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func serveWS(sessions *Sessions, hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		// Upgrade 失败时它自己已经写过 HTTP 错误响应了，这里只记日志
@@ -53,18 +57,34 @@ func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := &Client{hub: hub, conn: conn, send: make(chan []byte, sendBuffer)}
+	// ?session=xxx 复用已有会话；不传就开一个新的
+	sess, err := sessions.GetOrCreate(r.URL.Query().Get("session"))
+	if err != nil {
+		conn.WriteMessage(websocket.TextMessage, errorEvent("创建会话失败: "+err.Error()))
+		conn.Close()
+		return
+	}
+
+	c := &Client{hub: hub, conn: conn, send: make(chan []byte, sendBuffer), session: sess.ID}
 	hub.add(c) // 必须在起 writePump 之前登记，否则会漏掉这期间广播的消息
 
+	// 记上这一个客户端。只要还有人在看，这个会话就不会被回收器收掉 ——
+	// 一定要在 readPump 之前加，否则短暂连接会先减后加，把计数弄成负数。
+	sessions.AddClient(sess.ID)
+
+	// 先告诉客户端它落在哪个会话。它得把这个 id 放进 URL 才能分享给别人一起看。
+	c.send <- sessionEvent(sess.ID)
+
 	go c.writePump()
-	c.readPump() // 阻塞到连接断开为止
+	c.readPump(sessions) // 阻塞到连接断开为止
 }
 
 // readPump 独占读循环。函数返回即代表连接结束，顺手把现场收拾干净。
-func (c *Client) readPump() {
+func (c *Client) readPump(sessions *Sessions) {
 	defer func() {
 		c.hub.remove(c)
 		c.conn.Close()
+		sessions.RemoveClient(c.session)
 	}()
 
 	c.conn.SetReadLimit(maxMessageSize)
@@ -83,7 +103,7 @@ func (c *Client) readPump() {
 			}
 			return
 		}
-		c.hub.forward(msg)
+		sessions.Handle(c.session, msg)
 	}
 }
 

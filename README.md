@@ -22,7 +22,8 @@ Goagent/
 │   │   └── src/
 │   │       ├── host.mjs   stdio 协议 + agent 装配
 │   │       └── tools.mjs  工具定义 + 路径越界检查
-│   └── web/           Vue3 + Vite，之后用 Capacitor 打包成 App
+│   ├── web/           Vue3 + Vite，之后用 Capacitor 打包成 App
+│   └── cli/           TS 终端客户端，tsc 编译，bin 分发
 └── scripts/           冒烟测试
 ```
 
@@ -40,17 +41,26 @@ agent 循环本身是 pi 写好的，重写它是浪费。两边各干各擅长�
 cp .env.example .env     # 然后填 DEEPSEEK_API_KEY
 ```
 
-两个终端：
+三个终端：
 
 ```bash
 pnpm server          # 终端 1：Go daemon，:8080（同时拉起 agent 子进程）
 pnpm web dev         # 终端 2：Vite 开发服务器，:5173
+pnpm cli             # 终端 3：CLI 客户端
 ```
 
-打开 http://localhost:5173，**再开一个窗口打开同一个地址**，任意一边发消息，
-两边会同时出现 —— 这就是 W1 的验收标准。
+打开 http://localhost:5173，**再开一个窗口打开同一个地址**，然后终端里也连上。
+在任意一端提问，**三边同时看到同一次对话** —— 包括工具调用和流式输出。
+别处发来的消息在 CLI 里会标成 `[其他客户端]`。
 
 手机想看：连同一个 WiFi，用 `pnpm web dev` 输出里那个 Network 地址。
+
+CLI 也能一次问完就走，或者装成全局命令：
+
+```bash
+node packages/cli/dist/index.js "帮我看看这个目录里有啥"
+cd packages/cli && npm link      # 之后任意目录直接敲 goagent
+```
 
 ## 生产构建
 
@@ -64,10 +74,11 @@ pnpm server          # daemon 直接把它当静态目录伺服，:8080 一个�
 - [x] W1 骨架：WebSocket 广播，多窗口实时同步
 - [x] Step 1：Go daemon ⇄ node 子进程（stdio JSONL），pi SDK 接 DeepSeek，
       流式输出 + 工具调用 ← **现在在这**
-- [ ] Step 2：会话管理 + context 取消（中途打断正在跑的 agent）
+- [x] Step 5：CLI 客户端 —— 提前做了，因为它不依赖 Step 2/3/4，
+      加上之后「三端同时看到」这个卖点才真正成立
+- [ ] Step 2：会话管理 + context 取消（中途打断正在跑的 agent）← **下一步**
 - [ ] Step 3：审批状态机（挂在 pi 的 `beforeToolCall` 钩子上）
 - [ ] Step 4：审计日志（挂在 `afterToolCall` 钩子上）
-- [ ] Step 5：CLI 客户端，`npm i -g` 后有 `goagent` 命令
 - [ ] Step 6：压测 + Capacitor 打包 + 录 demo
 
 ## 冒烟测试

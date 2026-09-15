@@ -3,8 +3,9 @@
   "private": true,
   "scripts": {
     "web": "pnpm --filter @goagent/web",
+    "cli": "node packages/cli/dist/index.js",
     "server": "cd server && go run .",
-    "build": "pnpm --filter @goagent/web build",
+    "build": "pnpm --filter @goagent/web build && pnpm --filter @goagent/cli build",
     "smoke": "node scripts/smoke.mjs",
     "smoke:agent": "node scripts/smoke-agent.mjs"
   }

@@ -87,7 +87,8 @@ func (h *Hub) attachHost(c *Client, code, token string) (p *Pairing, created boo
 	h.mu.Unlock()
 
 	if old != nil && old != c {
-		h.remove(old) // 得先出锁：remove 要写锁
+		// 得先出锁：evict 要写锁。告诉它被顶掉了，否则它会当成网络抖动一直重连。
+		h.evict(old, "evicted", "另一个进程用同一个配对码连上来了")
 	}
 	return p, created, nil
 }
@@ -136,6 +137,29 @@ func (h *Hub) remove(c *Client) {
 	h.mu.Lock()
 	h.removeLocked(c)
 	h.mu.Unlock()
+}
+
+// evict 顶掉一个连接，**并且告诉它为什么**。
+//
+// 只说「连接断了」是不够的：对面看到 onclose 会当成网络抖动，转头就重连。
+// 两个进程拿着同一个配对码时，这就变成每秒一次的互相顶替 —— 谁也连不上，
+// 而且日志里只有一行行「电脑已接入」，看不出任何异常。
+//
+// 必须先塞消息再 close：removeLocked 会关掉 send，关掉之后就再也塞不进去了。
+// 塞的时候持写锁 —— 别的路径（detach、踢慢客户端）也会来关这个 channel，
+// 只有写锁能保证「塞」和「关」不重叠，同 Hub 上那条不变量。
+// 非阻塞，所以拿着写锁也不会被慢客户端拖住。
+func (h *Hub) evict(c *Client, code, msg string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if !c.closed {
+		select {
+		case c.send <- errorMsg(code, msg):
+		default: // 缓冲满了，这条通知只能算了 —— 连接本来就要关
+		}
+	}
+	h.removeLocked(c)
 }
 
 // detach 是连接结束时的收尾：先摘掉自己，如果自己是电脑，再告诉所有手机一声。

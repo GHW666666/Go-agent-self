@@ -12,6 +12,7 @@ package main
 // 不变量一旦破掉，表现是 "send on closed channel" 的 panic，不需要竞态检测器。
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -299,19 +300,63 @@ func TestEvictTellsTheOldHost(t *testing.T) {
 		t.Fatalf("attachHost: %v", err)
 	}
 
-	// 旧连接应该先收到一条 evicted，然后 channel 才关
+	// 读到底：range 到 channel 关闭才结束，所以这一趟同时证明了两件事 ——
+	// 通知塞进去了，而且塞完之后才 close（writePump 的收尾顺序）。
+	//
+	// 不能假设「第一条就是 evicted」：旧连接自己 attach 的时候也收过
+	// 一条 watchers，它还在缓冲里排队。
+	var got []string
+	for msg := range old.send {
+		got = append(got, string(msg))
+	}
+	for _, m := range got {
+		if strings.Contains(m, "evicted") {
+			return
+		}
+	}
+	t.Fatalf("旧连接没收到 evicted —— 它会当成网络抖动然后重连。只收到：%v", got)
+}
+
+// TestWatchersToldToHost —— 电脑必须知道有没有人在看。
+//
+// 这条不是锦上添花：agent 申请目录权限时，确认框在手机上。电脑不知道有没有人
+// 在看，就只能一直等一个不会来的回答，或者干脆不问就放弃 —— 两个都是错的。
+func TestWatchersToldToHost(t *testing.T) {
+	h := NewHub()
+	host := newTestClient(h, roleHost)
+	if _, _, err := h.attachHost(host, "TEST99", "tok"); err != nil {
+		t.Fatalf("attachHost: %v", err)
+	}
+	// 电脑是后到的，得先知道自己接进来时有没有人在
+	assertWatchers(t, host, 0)
+
+	phone := newTestClient(h, rolePhone)
+	if _, err := h.attachController(phone, "TEST99"); err != nil {
+		t.Fatalf("attachController: %v", err)
+	}
+	assertWatchers(t, host, 1)
+
+	h.detach(phone)
+	assertWatchers(t, host, 0)
+}
+
+// assertWatchers 从电脑的缓冲里取一条，断言它是 watchers 且数字对。
+func assertWatchers(t *testing.T, host *Client, want int) {
+	t.Helper()
 	select {
-	case msg := <-old.send:
-		if !strings.Contains(string(msg), "evicted") {
-			t.Fatalf("塞的不是 evicted：%s", msg)
+	case msg := <-host.send:
+		var ev struct {
+			Type  string `json:"type"`
+			Count int    `json:"count"`
+		}
+		if err := json.Unmarshal(msg, &ev); err != nil || ev.Type != TypeWatchers {
+			t.Fatalf("要 %s，拿到 %s", TypeWatchers, msg)
+		}
+		if ev.Count != want {
+			t.Fatalf("在看的人数该是 %d，拿到 %d", want, ev.Count)
 		}
 	default:
-		t.Fatal("旧连接没收到通知 —— 它会当成网络抖动然后重连")
-	}
-
-	// 缓冲写完之后才轮到 close —— 这正是 writePump 的收尾顺序
-	if _, ok := <-old.send; ok {
-		t.Fatal("通知之后 channel 应该已经关了")
+		t.Fatal("电脑没收到 watchers —— 它不知道有没有人在看")
 	}
 }
 

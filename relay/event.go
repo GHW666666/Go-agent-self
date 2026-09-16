@@ -10,13 +10,22 @@ import "encoding/json"
 //
 // 用 relay: 前缀把它们和业务消息隔开，业务侧不可能撞名。
 const (
-	TypePresence = "relay:presence" // 电脑上线/掉线了
+	TypePresence = "relay:presence" // 电脑上线/掉线了（只发给手机）
+	TypeWatchers = "relay:watchers" // 有几台手机在看（只发给电脑）
 	TypeError    = "relay:error"    // 配对码不对、被限流之类，中继发起的
 )
 
 type presenceEvent struct {
 	Type   string `json:"type"`
 	Online bool   `json:"online"`
+}
+
+// watchersEvent 是 presence 的反方向。两个方向都需要，但用途不同：
+// 手机要知道电脑在不在（不然只能对着空气打字）；电脑要知道**有没有人在看**——
+// agent 申请目录权限时得靠它决定等不等，没人在看手机，等就是白等。
+type watchersEvent struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
 }
 
 type errorEvent struct {
@@ -30,6 +39,11 @@ type errorEvent struct {
 
 func presenceMsg(online bool) []byte {
 	b, _ := json.Marshal(presenceEvent{Type: TypePresence, Online: online})
+	return b
+}
+
+func watchersMsg(n int) []byte {
+	b, _ := json.Marshal(watchersEvent{Type: TypeWatchers, Count: n})
 	return b
 }
 

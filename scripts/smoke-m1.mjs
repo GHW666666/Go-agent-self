@@ -53,6 +53,11 @@ async function connect(query) {
 
   ws.addEventListener('message', (e) => {
     const msg = JSON.parse(e.data)
+    // relay:watchers 只有电脑会收到（中继告诉它有几台手机在看），
+    // 真实 host 在 switch 里忽略它。这里的假客户端也照做 ——
+    // 留着的话它会插队，每条断言都得先跳过它一次。
+    // 这条消息本身由 hub_test.go 的 TestWatchersToldToHost 管。
+    if (msg.type === 'relay:watchers') return
     const w = waiters.shift()
     if (w) w(msg)
     else inbox.push(msg)

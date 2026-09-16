@@ -84,27 +84,35 @@ func (h *Hub) attachHost(c *Client, code, token string) (p *Pairing, created boo
 	p.host = c
 	p.lastSeen = time.Now()
 	c.pairing = p
+	n := len(p.controllers) // 出锁之后 p 就不受保护了，先数出来
 	h.mu.Unlock()
 
 	if old != nil && old != c {
 		// 得先出锁：evict 要写锁。告诉它被顶掉了，否则它会当成网络抖动一直重连。
 		h.evict(old, "evicted", "另一个进程用同一个配对码连上来了")
 	}
+	// 电脑可能是后到的（重启、换网络），而手机早就守在那儿了。
+	// 不补一条的话它会以为没人在看，agent 申请权限时直接放弃等待。
+	h.notifyWatchers(p, n)
 	return p, created, nil
 }
 
 // attachController 把一台手机挂到一个已存在的配对上。
 func (h *Hub) attachController(c *Client, code string) (*Pairing, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	p, ok := h.pairings[code]
 	if !ok {
+		h.mu.Unlock()
 		return nil, errNoPairing
 	}
 	p.controllers[c] = struct{}{}
 	p.lastSeen = time.Now()
 	c.pairing = p
+	n := len(p.controllers)
+	h.mu.Unlock()
+
+	h.notifyWatchers(p, n)
 	return p, nil
 }
 
@@ -170,11 +178,23 @@ func (h *Hub) detach(c *Client) {
 	h.mu.Lock()
 	p := c.pairing
 	wasHost := p != nil && p.host == c
+	wasController := p != nil && !wasHost
 	h.removeLocked(c)
+	// 数的是摘掉之后剩下的（removeLocked 已经把它删了）。必须在锁内数完 ——
+	// 出锁之后再读 p.controllers 就是 data race 了。
+	// 注意 p 可能是 nil：detach 要幂等，第二次进来 c.pairing 已经是空的。
+	var n int
+	if wasController {
+		n = len(p.controllers)
+	}
 	h.mu.Unlock()
 
 	if wasHost {
 		h.notifyPresence(p, false)
+	}
+	if wasController {
+		// 手机走了电脑得知道，不然它会一直以为还有人在看。
+		h.notifyWatchers(p, n)
 	}
 }
 
@@ -241,6 +261,23 @@ func (h *Hub) notifyPresence(p *Pairing, online bool) {
 	for _, c := range slow {
 		h.remove(c)
 	}
+}
+
+// notifyWatchers 告诉电脑现在有几台手机在看。presence 的反方向。
+//
+// 用途只有一个，但很硬：agent 申请目录权限时要弹确认框，而**确认框在手机上**。
+// 电脑不知道有没有人在看，就只能一直等一个不会来的回答，
+// 或者干脆不问就放弃 —— 两个都是错的。
+func (h *Hub) notifyWatchers(p *Pairing, n int) {
+	h.mu.RLock()
+	host := p.host
+	if host != nil {
+		select {
+		case host.send <- watchersMsg(n):
+		default: // 缓冲满了 —— 和别处一样，宁可丢这条也不能阻塞
+		}
+	}
+	h.mu.RUnlock()
 }
 
 // ---------------------------------------------------------------- 回收

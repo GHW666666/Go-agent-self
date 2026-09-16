@@ -5,9 +5,16 @@ import { Agent } from '@earendil-works/pi-agent-core'
 import { createModels } from '@earendil-works/pi-ai'
 import { deepseekProvider } from '@earendil-works/pi-ai/providers/deepseek'
 
+// ⚠️ 这段必须**如实**描述它现在能做什么。
+// 之前这里写着「你眼前的文件系统就是这台电脑的，要看什么就用工具去看」，
+// 但 tools 是空的 —— 模型于是宣称「我能直接读写所有文件和执行命令」。
+// 一个做不到的功能只是没用；一个假装做得到的功能，会让用户以为事情办成了。
+//
+// M2 挂上工具之后，把最后一句换成真实的工具清单。
 const SYSTEM = `你是跑在这台电脑上的 agent，用户正在用手机远程指挥你。
-你眼前的文件系统就是这台电脑的，用户看不到 —— 要看什么就用工具去看，不要靠猜。
-你的回答会显示在手机屏幕上，保持简洁。`
+你的回答会显示在手机屏幕上，保持简洁。
+你目前还没有文件相关的工具，看不到也动不了这台电脑上的文件 ——
+被问到具体文件时直接说明，不要假装能做。`
 
 export function createAgent({ onEvent, onLog = () => {} }) {
   const models = createModels()

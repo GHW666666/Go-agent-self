@@ -184,6 +184,53 @@ button.link:hover {
   text-align: center;
 }
 
+/* ---------------------------------------------------------------- 授权 */
+
+.ask {
+  margin: 0 16px 4px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.ask .what {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ask .path {
+  display: block;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--bg);
+  border-radius: 8px;
+  /* 路径很长，宁可折行也不能撑破弹窗 */
+  word-break: break-all;
+}
+
+.ask .why {
+  margin: 10px 0 12px;
+  font-size: 14px;
+}
+
+.ask .row {
+  display: flex;
+  gap: 8px;
+}
+
+.ask .row button {
+  flex: 1;
+}
+
+/* 拒绝不是次要动作，是一条正当的选择 —— 别把它画成灰的 */
+.ask .row button.ghost {
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--line);
+}
+
 /* ---------------------------------------------------------------- 输入 */
 
 form:not(.pair) {

@@ -15,6 +15,7 @@ type AgentEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_start'; name: string; args: unknown }
   | { type: 'tool_end'; name: string; ok: boolean }
+  | { type: 'ask_access'; path: string; reason: string; requestId: string }
   | { type: 'done' }
   | { type: 'error'; message: string }
 
@@ -36,6 +37,8 @@ const status = ref<Status>('connecting')
 const running = ref(false)
 /** 电脑在不在线。null = 中继还没告诉我们 */
 const online = ref<boolean | null>(null)
+/** 电脑上的 agent 正在申请一个目录的权限。null = 没有待确认的 */
+const ask = ref<{ path: string; reason: string; requestId: string } | null>(null)
 
 let send = (_: string) => {}
 let close = () => {}
@@ -48,6 +51,7 @@ function start() {
   bubbles.value = []
   notice.value = ''
   online.value = null
+  ask.value = null
 
   const conn = connectWS({
     code: () => code.value,
@@ -118,6 +122,12 @@ function onEvent(raw: string) {
       bubbles.value.push({ kind: 'tool', text: `${ev.ok ? '✓' : '✗'} ${ev.name} 结束` })
       break
 
+    case 'ask_access':
+      // 电脑上的 agent 撞到一堵墙：它想看的目录用户还没授权。
+      // 这一下必须由人来点 —— 整套权限模型就落在这个弹窗上。
+      ask.value = { path: ev.path, reason: ev.reason, requestId: ev.requestId }
+      break
+
     case 'done':
       running.value = false
       break
@@ -149,6 +159,18 @@ function submit() {
 // 只是把 cancel 发过去，由电脑端透传给 agent。
 function stop() {
   send(JSON.stringify({ type: 'cancel' }))
+}
+
+/** 用户对「申请访问某个目录」的回答。 */
+function answer(ok: boolean) {
+  const a = ask.value
+  if (!a) return
+  send(JSON.stringify({ type: 'grant', requestId: a.requestId, ok }))
+  bubbles.value.push({
+    kind: ok ? 'tool' : 'error',
+    text: ok ? `已允许访问 ${a.path}` : `已拒绝访问 ${a.path}`,
+  })
+  ask.value = null
 }
 </script>
 
@@ -195,14 +217,26 @@ function stop() {
         </li>
       </ul>
 
+      <!-- 授权确认。放在输入框上面、贴着底部 —— 拇指够得到的地方。
+           agent 正停在这儿等一个回答，不给它答复它就一直卡住。 -->
+      <div v-if="ask" class="ask">
+        <p class="what">电脑上的 agent 想访问一个目录</p>
+        <code class="path">{{ ask.path }}</code>
+        <p class="why">{{ ask.reason }}</p>
+        <div class="row">
+          <button type="button" class="ghost" @click="answer(false)">拒绝</button>
+          <button type="button" @click="answer(true)">允许</button>
+        </div>
+      </div>
+
       <form @submit.prevent="submit">
         <input
           v-model="draft"
           placeholder="让电脑干点什么"
           autocomplete="off"
-          :disabled="running || !online"
+          :disabled="running || !online || !!ask"
         />
-        <button v-if="!running" :disabled="!draft.trim() || !online">发送</button>
+        <button v-if="!running" :disabled="!draft.trim() || !online || !!ask">发送</button>
         <button v-else type="button" class="stop" @click="stop">停止</button>
       </form>
     </template>

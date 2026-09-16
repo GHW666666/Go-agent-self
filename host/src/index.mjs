@@ -4,6 +4,7 @@
 // 它**主动连出去**到中继（出站连接不受 NAT 阻挡），手机从外面连中继，
 // 两边挂到同一个配对码下面，指令和结果就从中间流过。
 // 买公网服务器的全部意义就在于：电脑不需要有自己的公网地址。
+import { randomUUID } from 'node:crypto'
 import { styleText } from 'node:util'
 import { createAgent } from './agent.mjs'
 import { configPath, load, newCode, save } from './config.mjs'
@@ -20,10 +21,17 @@ const log = (...a) => console.error(dim('[host]'), ...a)
 
 // ---------------------------------------------------------------- 状态
 let cfg = await load()
+// 授权目录跟身份存在同一份配置里 —— 都是「这台机器的事」，
+// 拆成两个文件只会让备份和迁移漏掉一个。
+if (!Array.isArray(cfg.grants)) cfg = await save({ ...cfg, grants: [] })
+
 let ws = null
 let retry = 0
 let reconnectTimer = null
 let stopped = false
+
+// 有没有人在看手机。中继会告诉我们（relay:watchers）—— 见 askPhone。
+let phoneOnline = false
 
 // 正在打一行流式文本。deltas 是一个字一个字来的，每个都换行会散成一片。
 let typing = false
@@ -32,11 +40,66 @@ let typing = false
 const STABLE_AFTER = 10_000
 let stableTimer = null
 
-const agent = createAgent({ onEvent: onAgentEvent, onLog: log })
+// ---------------------------------------------------------------- 授权
+// 同一个对象递给两个地方用：工具层拿 list() 判越界，add() 记下用户新批的目录，
+// ask() 去手机上要一个回答。授权状态只有这一份，没有第二个真相来源。
+const grants = {
+  list: () => cfg.grants,
+  add: async (p) => {
+    cfg = await save({ ...cfg, grants: [...cfg.grants, p] })
+    log(`${green('已授权')} ${p}`)
+  },
+  ask: askPhone,
+}
+
+const agent = createAgent({ onEvent: onAgentEvent, onLog: log, grants })
 
 // ---------------------------------------------------------------- 收发
 function send(ev) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(ev))
+}
+
+// ---------------------------------------------------------------- 问手机
+// agent 想碰一个没授权的目录，就得停下来问人。这个 Map 是「正在等的那些问题」：
+// 键是 requestId，值是把它解决掉的那个函数。
+const pendingAsks = new Map()
+
+// 没人回答就一直挂着，把 prompt 队列堵死。给个上限，到点算拒绝。
+const ASK_TIMEOUT = 2 * 60_000
+
+function askPhone(path, reason, signal) {
+  // 没人在看手机，等就是白等。直接拒掉，让 agent 去跟用户说清楚。
+  if (!phoneOnline) {
+    log(dim('没人在看手机，这次申请直接算拒绝'))
+    return Promise.resolve(false)
+  }
+  // 已经按过停止了。等着的话这个 tool 永远不返回，队列就卡在这儿。
+  if (signal?.aborted) return Promise.resolve(false)
+
+  const requestId = randomUUID()
+  return new Promise((resolve) => {
+    // 三条路都要走这里：用户点了、超时了、用户按了停止。
+    // 清 Map 和移除监听放在一处，漏一个就是内存泄漏或者误触发。
+    const settle = (ok) => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      pendingAsks.delete(requestId)
+      resolve(ok)
+    }
+    const onAbort = () => settle(false)
+    const timer = setTimeout(() => {
+      process.stderr.write(dim('  （等太久了，算拒绝）\n'))
+      settle(false)
+    }, ASK_TIMEOUT)
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+    pendingAsks.set(requestId, settle)
+
+    process.stderr.write(`  ${yellow('⏸')} 申请访问 ${path}\n`)
+    process.stderr.write(`${dim(`    理由：${reason}`)}\n`)
+    process.stderr.write(`${dim('    等你在手机上点确认…')}\n`)
+    send({ type: 'ask_access', path, reason, requestId })
+  })
 }
 
 // ---------------------------------------------------------------- 屏幕
@@ -158,8 +221,29 @@ async function handle(msg) {
       break
 
     case 'relay:presence':
-      // 中继发给我们说「手机来了/走了」。host 这边不关心。
+      // 中继告诉我们电脑自己在不在线。host 这边当然知道自己在线，不用管。
       break
+
+    case 'relay:watchers':
+      // 反过来：有几台手机在看。askPhone 靠它决定要不要等。
+      phoneOnline = msg.count > 0
+      log(dim(phoneOnline ? `手机已接入（${msg.count} 台）` : '手机都走了'))
+      // 人走了，那些正等着点确认的申请就没人回答了。
+      // 不处理的话它们会一直挂到 2 分钟超时，白白堵着 prompt 队列 ——
+      // 而这段时间里 agent 什么都不干。
+      // 注意要遍历副本：settle 会从 Map 里删自己。
+      if (!phoneOnline && pendingAsks.size) {
+        log(dim(`有 ${pendingAsks.size} 个申请没人回答了，一律算拒绝`))
+        for (const settle of [...pendingAsks.values()]) settle(false)
+      }
+      break
+
+    case 'grant': {
+      const settle = pendingAsks.get(msg.requestId)
+      // 对不上的答复是可能的：上一次连接留下的问题，用户这会儿才点。
+      if (settle) settle(msg.ok === true)
+      break
+    }
 
     case 'relay:error':
       // 被顶掉：另一个进程拿着同一个配对码连上来了。
@@ -196,6 +280,14 @@ function banner() {
   console.error(`  配对码   ${cyan(cfg.code)}`)
   console.error(dim('  手机打开中继地址，输入上面这串。配一次就记住了。'))
   console.error(dim(`  码存在 ${configPath}，重启不变。`))
+  console.error('')
+  // 用户得知道 agent 现在能碰什么。零权限起步是这套东西的卖点，
+  // 但那也要说出口，否则「它怎么不干活」会变成一个 bug 报告。
+  if (cfg.grants.length) {
+    console.error(dim(`  已授权的目录：${cfg.grants.join('、')}`))
+  } else {
+    console.error(dim('  它能碰的目录：**一个都没有**。要访问时会先在手机上问你。'))
+  }
   console.error('')
 }
 

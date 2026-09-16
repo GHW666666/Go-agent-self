@@ -8,6 +8,7 @@
     "web": "pnpm --filter goagent-web dev",
     "build": "pnpm --filter goagent-web build",
     "smoke": "node scripts/smoke-m1.mjs",
+    "smoke:m2": "node scripts/smoke-m2.mjs",
     "test": "go -C relay test -count=5 ."
   }
 }

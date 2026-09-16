@@ -28,17 +28,24 @@ pnpm web      # 终端 3：手机端页面
 ## 现在到哪了
 
 - [x] **M1 链路跑通** —— 手机上打字 → 电脑上的 agent 回答 → 手机上看到流式文字
-- [ ] **M2 文件 + 白名单** —— `send_file` / `request_access`，手机上授权、下载
+- [x] **M2 权限 + 文件** —— agent 开局碰不到任何目录，要看得先在手机上申请；
+      手机上点同意才拿到权限。`send_file`（把文件传回手机）还没做
 - [ ] **M3 上 VPS + Capacitor 打包**
+
+**它一开始什么也碰不到，这是故意的。** agent 想看你的桌面，得自己开口申请，
+手机上弹出确认框，你点了同意它才拿得到 —— 授权按目录一个个给，记在本地，重启还在。
+拒了就拒了，它不会换个路径再试。
 
 ## 验证
 
 ```bash
-pnpm smoke                      # 只测中继：配对、转发、断线重连、限流、回收
+pnpm test                       # 中继的并发不变量，跑 5 遍
+pnpm smoke                      # 中继：配对、转发、断线重连、限流、回收
+node scripts/smoke-m2.mjs       # 权限边界：路径越狱、零授权、拒绝信息
 node scripts/smoke-m1.mjs --live  # 再把真的 host 拉起来，问模型一句
 ```
 
-第一条**不需要 API key、不烧 token** —— 「链路通没通」和「模型答没答对」是两件事，
+前三条都**不需要 API key、不烧 token** —— 「链路通没通」和「模型答没答对」是两件事，
 混在一起测的话，中继坏了和 key 过期了看起来一模一样。
 
 ## 目录
@@ -46,6 +53,8 @@ node scripts/smoke-m1.mjs --live  # 再把真的 host 拉起来，问模型一�
 ```
 relay/    Go 中继。只做一件事：按配对码把消息从一端转给另一端
 host/     电脑端。pi agent + 工具，一个 Node 进程
+  grants.mjs  授权目录列表 + 路径越界判定（安全边界就在这个文件里）
+  tools.mjs   list_dir / read_file / request_access，全都只读
 web/      手机端。Vue + Vite，以后用 Capacitor 打包成 App
 scripts/  验收脚本
 ```

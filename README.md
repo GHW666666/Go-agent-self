@@ -1,100 +1,65 @@
 # Goagent
 
-一个 Agent 中枢：Go daemon 跑在本地，Web / CLI / App 三种客户端连同一个它。
+**在手机上指挥你电脑里的 agent 干活，结果直接发到手机上。**
 
-## 结构
+人在外面，想起来电脑上有个文件要用、有件事没做，现在只有三条路：远程桌面（太重）、
+网盘（不会帮你整理）、或者算了。这是第四条。
 
-```
-浏览器 / CLI / App ──WebSocket──▶ Go daemon ──stdio JSONL──▶ node ──▶ pi SDK ──▶ LLM
-                                        │
-                                        └── 广播给所有客户端
-```
-
-```
-Goagent/
-├── server/            Go daemon —— HTTP 静态服务 + WebSocket 广播 + 子进程编排
-│   ├── main.go        启动、路由、SPA 回退
-│   ├── hub.go         连接管理 + 广播
-│   ├── client.go      单连接的收发循环 + 心跳
-│   └── agent.go       起 node 子进程，stdio 双向 JSONL
-├── packages/
-│   ├── agent/         pi SDK 宿主（Node）
-│   │   └── src/
-│   │       ├── host.mjs   stdio 协议 + agent 装配
-│   │       └── tools.mjs  工具定义 + 路径越界检查
-│   ├── web/           Vue3 + Vite，之后用 Capacitor 打包成 App
-│   └── cli/           TS 终端客户端，tsc 编译，bin 分发
-└── scripts/           冒烟测试
-```
-
-**为什么 agent 跑在 node 里而不是 Go 里？** pi SDK 只有 TS 版。
-Go 管的是连接、广播、进程生命周期、取消传播、审批路由、审计 —— 这些是它的强项；
-agent 循环本身是 pi 写好的，重写它是浪费。两边各干各擅长的。
-
-`packages/shared/`（协议类型 + WS 客户端）和 `packages/cli/` 到 Step 5 再建。
+手机只是屏幕和输入，真正干活的 agent 跑在你自己电脑上，看得见你的文件。
 
 ## 跑起来
 
-先准备密钥：
+三个进程，前两个在电脑上，第三个你手机打开。
 
 ```bash
-cp .env.example .env     # 然后填 DEEPSEEK_API_KEY
+pnpm install
+
+pnpm relay    # 终端 1：中继。手机和电脑靠它牵线
+pnpm host     # 终端 2：你的电脑。启动后会打印一串 6 位配对码
+pnpm web      # 终端 3：手机端页面
 ```
 
-三个终端：
+手机连同一个 WiFi，打开终端 3 里那个 **Network** 地址（`http://192.168.x.x:5173/`），
+把配对码输进去。配一次就记住了，以后打开直接就是对话界面。
+
+> 电脑端**主动连出去**，所以它不需要有公网地址 —— 这就是中继存在的全部理由。
+> 先本地跑通，之后把 `relay/` 丢到一台 VPS 上，手机在 4G 下也能用。
+
+## 现在到哪了
+
+- [x] **M1 链路跑通** —— 手机上打字 → 电脑上的 agent 回答 → 手机上看到流式文字
+- [ ] **M2 文件 + 白名单** —— `send_file` / `request_access`，手机上授权、下载
+- [ ] **M3 上 VPS + Capacitor 打包**
+
+## 验证
 
 ```bash
-pnpm server          # 终端 1：Go daemon，:8080（同时拉起 agent 子进程）
-pnpm web dev         # 终端 2：Vite 开发服务器，:5173
-pnpm cli             # 终端 3：CLI 客户端
+pnpm smoke                      # 只测中继：配对、转发、断线重连、限流、回收
+node scripts/smoke-m1.mjs --live  # 再把真的 host 拉起来，问模型一句
 ```
 
-打开 http://localhost:5173，**再开一个窗口打开同一个地址**，然后终端里也连上。
-在任意一端提问，**三边同时看到同一次对话** —— 包括工具调用和流式输出。
-别处发来的消息在 CLI 里会标成 `[其他客户端]`。
+第一条**不需要 API key、不烧 token** —— 「链路通没通」和「模型答没答对」是两件事，
+混在一起测的话，中继坏了和 key 过期了看起来一模一样。
 
-手机想看：连同一个 WiFi，用 `pnpm web dev` 输出里那个 Network 地址。
+## 目录
 
-CLI 也能一次问完就走，或者装成全局命令：
-
-```bash
-node packages/cli/dist/index.js "帮我看看这个目录里有啥"
-cd packages/cli && npm link      # 之后任意目录直接敲 goagent
+```
+relay/    Go 中继。只做一件事：按配对码把消息从一端转给另一端
+host/     电脑端。pi agent + 工具，一个 Node 进程
+web/      手机端。Vue + Vite，以后用 Capacitor 打包成 App
+scripts/  验收脚本
 ```
 
-## 生产构建
+细节见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
-```bash
-pnpm build           # 前端产物进 packages/web/dist
-pnpm server          # daemon 直接把它当静态目录伺服，:8080 一个端口搞定
-```
+## 配置
 
-## 当前进度
+| 环境变量 | 谁用 | 默认 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | host | 无。放 `.env`，已在 `.gitignore` 里 |
+| `GOAGENT_RELAY` | host | `ws://localhost:8080` |
+| `GOAGENT_MODEL` | host | `deepseek-v4-flash` |
+| `GOAGENT_CONFIG` | host | `~/.goagent/config.json` |
 
-- [x] W1 骨架：WebSocket 广播，多窗口实时同步
-- [x] Step 1：Go daemon ⇄ node 子进程（stdio JSONL），pi SDK 接 DeepSeek，
-      流式输出 + 工具调用 ← **现在在这**
-- [x] Step 5：CLI 客户端 —— 提前做了，因为它不依赖 Step 2/3/4，
-      加上之后「三端同时看到」这个卖点才真正成立
-- [x] Step 2：会话管理 + context 取消（中途打断正在跑的 agent）← **现在在这**
-- [ ] Step 3：审批状态机（挂在 pi 的 `beforeToolCall` 钩子上）
-- [ ] Step 4：审计日志（挂在 `afterToolCall` 钩子上）
-- [ ] Step 6：压测 + Capacitor 打包 + 录 demo
-
-## 会话
-
-一个会话 = 一个独立的 agent 子进程 + 一条可取消的生命周期。
-
-连接时用 `?session=<id>` 指定会话：带上已存在的 id 就加入它（多个窗口/CLI
-共享同一段对话），不带就开一个新的。连上后第一帧是
-`{"type":"session","id":"..."}`，客户端要把它放进 URL 才能分享出去。
-
-没人连的会话会在闲置 15 分钟后被回收（连同它的 node 子进程）。
-`-session-idle 0` 可以关掉回收，`-session-idle 6s` 方便观察。
-
-## 冒烟测试
-
-```bash
-pnpm smoke:agent      # 单客户端全链路 prompt → 流式文本 → done（真调模型，花钱）
-pnpm smoke:sessions   # 会话隔离 / 共享 / 取消（只有最后一组调模型）
-```
+配对码和 token 存在 `~/.goagent/config.json` —— 它是这台电脑的身份，不跟着仓库走，
+重启也不变。

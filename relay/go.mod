@@ -1,4 +1,4 @@
-module goagent
+module github.com/GHW666666/Go-agent-self/relay
 
 go 1.27
 

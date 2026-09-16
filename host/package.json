@@ -1,0 +1,16 @@
+{
+  "name": "goagent-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "goagent-host": "src/index.mjs"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=../.env src/index.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.85.1"
+  }
+}

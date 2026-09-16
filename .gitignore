@@ -9,5 +9,5 @@ dist/
 !.env.example
 
 # Go 编译产物
-server/*.exe
-server/goagent
+relay/relay
+relay/*.exe

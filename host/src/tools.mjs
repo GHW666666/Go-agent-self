@@ -8,6 +8,7 @@
 // 几个字符串字段。TypeBox 的 Type.Object 产出的本来就是 JSON Schema，运行时等价。
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { canonical, isGranted, safePath } from './grants.mjs'
+import { createPresentation } from './presentation.mjs'
 
 // 读进来就直接进模型上下文，没有文件附件类型可以绕开。所以必须封顶 ——
 // 不封的话一句「读一下这个日志」就能把整个上下文撑爆。
@@ -61,6 +62,50 @@ export function makeTools({ list, add, ask }) {
         }
         const body = await readFile(abs, 'utf8')
         return { ...text(body), details: { path: abs, bytes: Buffer.byteLength(body) } }
+      },
+    },
+
+    {
+      name: 'create_presentation',
+      label: '制作 PPT',
+      description:
+        '根据结构化内容生成 PowerPoint 文件。只能写入已授权目录；' +
+        '如果输出目录未授权，先用 request_access 申请。',
+      parameters: {
+        type: 'object',
+        properties: {
+          outputPath: str('输出 PPTX 文件的绝对路径'),
+          title: str('演示文稿标题'),
+          subtitle: str('可选的副标题'),
+          theme: str('主题，目前只能使用 clean-blue'),
+          slides: {
+            type: 'array',
+            description:
+              '不包含封面的正文页，最多 30 页。每页必须有 title；要点页使用 ' +
+              '{ layout: "title-content", title: "...", bullets: ["...", "..."] }。' +
+              '也支持 content: { type: "text", text: "..." }、two-column 和 table。',
+            items: {
+              type: 'object',
+              properties: {
+                layout: { type: 'string', description: 'title-content、two-column、table 或 title-only' },
+                title: str('页面标题'),
+                subtitle: str('可选副标题'),
+                bullets: { type: 'array', items: str('一个要点') },
+                content: { type: 'object', description: '正文对象，或使用 bullets 字段' },
+              },
+              required: ['title'],
+            },
+          },
+        },
+        required: ['outputPath', 'title', 'slides'],
+      },
+      execute: async (_id, args) => {
+        const outputPath = safePath(list(), args.outputPath)
+        const result = await createPresentation({ ...args, outputPath })
+        return {
+          ...text(`PPT 已生成：${result.path}，共 ${result.slides} 页。`),
+          details: result,
+        }
       },
     },
 

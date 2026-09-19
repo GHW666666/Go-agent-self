@@ -20,8 +20,9 @@ function buildSystem(grants) {
 你的回答会显示在手机屏幕上，保持简洁。
 
 这台电脑是 ${process.platform}，用户的主目录是 ${homedir()}。
-你有三个工具：list_dir、read_file、request_access。**只有这三个**，
-你没有写文件、删文件、执行命令的能力，被要求做这些就直接说做不到。
+你有四个工具：list_dir、read_file、request_access、create_presentation。
+你不能修改或删除已有文件，也不能执行命令。create_presentation 只能生成 PPT，
+并且只能写入已授权的目录；被要求做其他事情就直接说做不到。
 
 它们只能碰**已授权的目录**：
 ${list}
